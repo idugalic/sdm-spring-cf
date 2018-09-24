@@ -20,7 +20,7 @@ Note: `<owner>` is your Github owner, e.g: idugalic
 
  - Install VirtualBox or another supported hypervisor for your operating system
  - [Install the CF command line client](https://pivotal.io/platform/pcf-tutorials/getting-started-with-pivotal-cloud-foundry-dev/install-the-cf-cli)
- - Install the [PCF Dev](https://pivotal.io/platform/pcf-tutorials/getting-started-wit  h-pivotal-cloud-foundry-dev/install-pcf-dev)
+ - Install the [PCF Dev](https://pivotal.io/platform/pcf-tutorials/getting-started-with-pivotal-cloud-foundry-dev/install-pcf-dev)
 
 Once the installation is complete, start PCF Dev (you can set the memory limits):
 ```
