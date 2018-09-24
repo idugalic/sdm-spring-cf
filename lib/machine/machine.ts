@@ -1,50 +1,45 @@
-/*
- * Copyright © 2018 Atomist, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 import {
+    AnyPush,
+    ArtifactGoal,
     AutoCodeInspection,
     Autofix,
     Build,
+    executeDeploy,
     GitHubRepoRef,
     goalContributors,
     goals,
+    not,
     onAnyPush,
+    ProductionDeploymentGoal,
+    ProductionEndpointGoal,
+    ProductionUndeploymentGoal,
     PushImpact,
     SoftwareDeliveryMachine,
     SoftwareDeliveryMachineConfiguration,
+    StagingDeploymentGoal,
+    StagingEndpointGoal,
+    ToDefaultBranch,
     whenPushSatisfies,
 } from "@atomist/sdm";
 import {
     createSoftwareDeliveryMachine,
+    DisableDeploy,
+    DisplayDeployEnablement,
+    EnableDeploy,
+    ExplainDeploymentFreezeGoal,
+    InMemoryDeploymentStatusManager,
+    isDeploymentFrozen,
     Version,
 } from "@atomist/sdm-core";
 import {
-    DockerBuild,
-    HasDockerfile,
-} from "@atomist/sdm-pack-docker";
-import {
-    KubernetesDeploy,
-    kubernetesSupport,
-} from "@atomist/sdm-pack-k8";
+    CloudFoundryBlueGreenDeployer, CloudFoundrySupport, EnvironmentCloudFoundryTarget, HasCloudFoundryManifest,
+} from "@atomist/sdm-pack-cloudfoundry";
+
 import {
     IsMaven,
     MavenBuilder,
     MavenProgressReporter,
     MavenProjectVersioner,
-    MavenVersionPreparation,
     ReplaceReadmeTitle,
     SetAtomistTeamInApplicationYml,
     SpringProjectCreationParameterDefinitions,
@@ -52,16 +47,15 @@ import {
     SpringSupport,
     TransformSeedToCustomProject,
 } from "@atomist/sdm-pack-spring";
-import { MavenPackage } from "../support/maven";
-import {
-    AddDockerfileAutofix,
-    AddDockerfileTransform,
-} from "../transform/addDockerfile";
+
+import { AddCloudFoundryManifestAutofix } from "../transform/addCloudFoundryManifest";
 import { AddFinalNameToPom } from "../transform/addFinalName";
 
-export function machine(
-    configuration: SoftwareDeliveryMachineConfiguration,
-): SoftwareDeliveryMachine {
+const freezeStore = new InMemoryDeploymentStatusManager();
+
+const IsDeploymentFrozen = isDeploymentFrozen(freezeStore);
+
+export function machine(configuration: SoftwareDeliveryMachineConfiguration): SoftwareDeliveryMachine {
 
     const sdm: SoftwareDeliveryMachine = createSoftwareDeliveryMachine(
         {
@@ -69,7 +63,7 @@ export function machine(
             configuration,
         });
 
-    const autofix = new Autofix().with(AddDockerfileAutofix);
+    const autofix = new Autofix().with(AddCloudFoundryManifestAutofix);
     const version = new Version().withVersioner(MavenProjectVersioner);
 
     const build = new Build().with({
@@ -77,32 +71,31 @@ export function machine(
         progressReporter: MavenProgressReporter,
     });
 
-    const dockerBuild = new DockerBuild().with({
-        preparations: [MavenVersionPreparation, MavenPackage],
-        options: { push: false },
-    });
-
-    const kubernetesDeploy = new KubernetesDeploy({ environment: "testing" });
-
     const BaseGoals = goals("checks")
         .plan(version, autofix, new AutoCodeInspection(), new PushImpact());
 
     const BuildGoals = goals("build")
-        .plan(build).after(autofix, version);
+        .plan(build)
+        .after(autofix, version);
 
-    const DeployGoals = goals("deploy")
-        .plan(dockerBuild).after(build)
-        .plan(kubernetesDeploy).after(dockerBuild);
+    const StagingDeploymentGoals = goals("deploy-stage")
+        .plan(ArtifactGoal, StagingDeploymentGoal, StagingEndpointGoal)
+        .after(build);
+    const ProductionDeploymentGoals = goals("deploy-prod")
+        .plan(ArtifactGoal, ProductionDeploymentGoal, ProductionEndpointGoal);
 
     sdm.addGoalContributions(goalContributors(
         onAnyPush().setGoals(BaseGoals),
+        whenPushSatisfies(IsDeploymentFrozen).setGoals(ExplainDeploymentFreezeGoal),
         whenPushSatisfies(IsMaven).setGoals(BuildGoals),
-        whenPushSatisfies(HasDockerfile).setGoals(DeployGoals),
+        whenPushSatisfies(HasCloudFoundryManifest, ToDefaultBranch).setGoals(StagingDeploymentGoals),
+        whenPushSatisfies(HasCloudFoundryManifest, not(IsDeploymentFrozen), ToDefaultBranch)
+            .setGoals(ProductionDeploymentGoals),
     ));
 
     sdm.addExtensionPacks(
         SpringSupport,
-        kubernetesSupport(),
+        CloudFoundrySupport,
     );
 
     sdm.addGeneratorCommand<SpringProjectCreationParameters>({
@@ -115,10 +108,62 @@ export function machine(
             ReplaceReadmeTitle,
             SetAtomistTeamInApplicationYml,
             TransformSeedToCustomProject,
-            AddDockerfileTransform,
             AddFinalNameToPom,
         ],
     });
-
+    deployRules(sdm);
     return sdm;
+}
+
+export function deployRules(sdm: SoftwareDeliveryMachine): void {
+    const deployToStaging = {
+        deployer: new CloudFoundryBlueGreenDeployer(sdm.configuration.sdm.projectLoader),
+        targeter: () => new EnvironmentCloudFoundryTarget("staging"),
+        deployGoal: StagingDeploymentGoal,
+        endpointGoal: StagingEndpointGoal,
+        undeployGoal: ProductionUndeploymentGoal,
+
+    };
+    sdm.addGoalImplementation("Staging local deployer",
+        deployToStaging.deployGoal,
+        executeDeploy(
+            sdm.configuration.sdm.artifactStore,
+            sdm.configuration.sdm.repoRefResolver,
+            deployToStaging.endpointGoal, deployToStaging),
+        {
+            pushTest: IsMaven,
+            logInterpreter: deployToStaging.deployer.logInterpreter,
+        },
+    );
+    sdm.addGoalSideEffect(
+        deployToStaging.endpointGoal,
+        deployToStaging.deployGoal.definition.displayName,
+        AnyPush);
+
+    const deployToProduction = {
+        deployer: new CloudFoundryBlueGreenDeployer(sdm.configuration.sdm.projectLoader),
+        targeter: () => new EnvironmentCloudFoundryTarget("production"),
+        deployGoal: ProductionDeploymentGoal,
+        endpointGoal: ProductionEndpointGoal,
+        undeployGoal: ProductionUndeploymentGoal,
+    };
+    sdm.addGoalImplementation("Production CF deployer",
+        deployToProduction.deployGoal,
+        executeDeploy(
+            sdm.configuration.sdm.artifactStore,
+            sdm.configuration.sdm.repoRefResolver,
+            deployToProduction.endpointGoal, deployToProduction),
+        {
+            pushTest: IsMaven,
+            logInterpreter: deployToProduction.deployer.logInterpreter,
+        },
+    );
+    sdm.addGoalSideEffect(
+        deployToProduction.endpointGoal,
+        deployToProduction.deployGoal.definition.displayName,
+        AnyPush);
+
+    sdm.addCommand(EnableDeploy)
+        .addCommand(DisableDeploy)
+        .addCommand(DisplayDeployEnablement);
 }
