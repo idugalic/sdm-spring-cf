@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 import { Configuration } from "@atomist/automation-client";
 import {
