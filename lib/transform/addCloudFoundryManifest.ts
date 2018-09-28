@@ -10,9 +10,10 @@ import { HasSpringBootPom, MavenProjectIdentifier } from "@atomist/sdm-pack-spri
 const JavaManifestFor = (name: string, teamId: string) => `---
 applications:
 - name: "${name}"
+  buildpack: https://github.com/cloudfoundry/java-buildpack.git
+  random-route: false
   memory: 1024M
   instances: 1
-  buildpack: https://github.com/cloudfoundry/java-buildpack.git
   env:
     ATOMIST_TEAM: ${teamId}`;
 

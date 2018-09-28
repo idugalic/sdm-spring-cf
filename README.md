@@ -16,28 +16,26 @@ Software Delivery Machine and how to create and develop on an SDM.
 ```
 Note: `<owner>` is your Github owner, e.g: idugalic
 
-### PCF Dev on a Mac
+### PCF Dev
 
- - Install VirtualBox or another supported hypervisor for your operating system
- - [Install the CF command line client](https://pivotal.io/platform/pcf-tutorials/getting-started-with-pivotal-cloud-foundry-dev/install-the-cf-cli)
- - Install the [PCF Dev](https://pivotal.io/platform/pcf-tutorials/getting-started-with-pivotal-cloud-foundry-dev/install-pcf-dev)
+ - [Download and install the CF command line client and PCF Dev (PAS 2.0.20.0)](https://docs.pivotal.io/pcf-dev/install-osx.html)
 
-Once the installation is complete, start PCF Dev (you can set the memory limits):
+Once the installation is complete, start PCF Dev:
 ```
-$ cf dev start -m 8192
+$ cf dev start -f .ISO-FILE
 ```
 
 After a couple of minutes you should have system running. 
 
-Open your browser and point to `https://apps.local.pcfdev.io`
-
-Create `cf-staging-space` and `f-production-space` spaces within the `pcfdev-org` organization:
+Login and create two spaces `cf-staging-space` , `cf-production-space` within `cfdev-org` organization:
 
 ```
-$ cf login -a https://api.local.pcfdev.io --skip-ssl-validation -u admin -p admin -o pcfdev-org
-$ cf create-space cf-staging-space  -o pcfdev-org
-$ cf create-space cf-production-space  -o pcfdev-org
+$ cf login -a https://api.dev.cfdev.sh -o cfdev-org --skip-ssl-validation
+$ cf create-space cf-staging-space
+$ cf create-space cf-production-space
 ```
+
+You can use the application manager by navigating to https://apps.dev.cfdev.sh/
 
 ### Install the Atomist command-line utility
 
@@ -48,12 +46,12 @@ $ npm install -g @atomist/cli
 ### Configuration
 The following configuration should be in your `~/.atomist/client.config.json` in order to successfully connect your SDM to PCF Dev:
 ```
-  "sdm": {
+   "sdm": {
     "cloudfoundry": {
-      "api": "https://api.local.pcfdev.io",
+      "api": "https://api.dev.cfdev.sh",
       "user": "admin",
       "password": "admin",
-      "org": "pcfdev-org",
+      "org": "cfdev-org",
       "spaces": {
         "staging": "cf-staging-space",
         "production": "cf-production-space"
