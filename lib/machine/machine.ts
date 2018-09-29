@@ -1,75 +1,73 @@
 import {
-    AnyPush,
-    ArtifactGoal,
     AutoCodeInspection,
     Autofix,
     Build,
-    executeDeploy,
     GitHubRepoRef,
     goalContributors,
     goals,
-    not,
     onAnyPush,
-    ProductionDeploymentGoal,
-    ProductionEndpointGoal,
-    ProductionUndeploymentGoal,
     PushImpact,
     SoftwareDeliveryMachine,
     SoftwareDeliveryMachineConfiguration,
-    StagingDeploymentGoal,
-    StagingEndpointGoal,
     ToDefaultBranch,
     whenPushSatisfies,
 } from "@atomist/sdm";
 import {
     createSoftwareDeliveryMachine,
-    DisableDeploy,
-    DisplayDeployEnablement,
-    EnableDeploy,
-    ExplainDeploymentFreezeGoal,
-    InMemoryDeploymentStatusManager,
-    isDeploymentFrozen,
     Version,
 } from "@atomist/sdm-core";
 import {
-    CloudFoundryBlueGreenDeployer, CloudFoundrySupport, EnvironmentCloudFoundryTarget, HasCloudFoundryManifest,
+    CloudFoundryDeploy, CloudFoundrySupport, HasCloudFoundryManifest,
 } from "@atomist/sdm-pack-cloudfoundry";
 
 import {
+    CloudNativeGitHubIssueRaisingReviewListener,
     IsMaven,
     MavenBuilder,
-    MavenProgressReporter,
     MavenProjectVersioner,
     ReplaceReadmeTitle,
     SetAtomistTeamInApplicationYml,
     SpringProjectCreationParameterDefinitions,
     SpringProjectCreationParameters,
-    SpringSupport,
+    SpringStyleGitHubIssueRaisingReviewListener,
+    springSupport,
     TransformSeedToCustomProject,
 } from "@atomist/sdm-pack-spring";
 
-import { AddCloudFoundryManifestAutofix } from "../transform/addCloudFoundryManifest";
+import { CloudFoundryDeploymentStrategy } from "@atomist/sdm-pack-cloudfoundry/lib/goals/CloudFoundryPushDeploy";
+import { ToProductionBranch } from "../support/pushTests";
+import { AddCloudFoundryManifestAutofix, AddCloudFoundryManifestTransform } from "../transform/addCloudFoundryManifest";
 import { AddFinalNameToPom } from "../transform/addFinalName";
-
-const freezeStore = new InMemoryDeploymentStatusManager();
-
-const IsDeploymentFrozen = isDeploymentFrozen(freezeStore);
 
 export function machine(configuration: SoftwareDeliveryMachineConfiguration): SoftwareDeliveryMachine {
 
     const sdm: SoftwareDeliveryMachine = createSoftwareDeliveryMachine(
         {
-            name: "Spring software delivery machine",
+            name: "Spring software delivery machine - Cloud Foundry",
             configuration,
         });
 
     const autofix = new Autofix().with(AddCloudFoundryManifestAutofix);
     const version = new Version().withVersioner(MavenProjectVersioner);
+    const inspect = new AutoCodeInspection();
 
-    const build = new Build().with({
-        builder: new MavenBuilder(sdm),
-        progressReporter: MavenProgressReporter,
-    });
+    const build = new Build().with({ name: "Maven", builder: new MavenBuilder(sdm) });
+
+    const cfDeployToStaging = new CloudFoundryDeploy({
+        uniqueName: "staging-deployment",
+        approval: false,
+        preApproval: false,
+        retry: true,
+    })
+       .with({ environment: "staging", strategy: CloudFoundryDeploymentStrategy.CLI });
+
+    const cfDeployToProduction = new CloudFoundryDeploy({
+        uniqueName: "production-deployment",
+        approval: true,
+        preApproval: true,
+        retry: true,
+    })
+        .with({ environment: "production", strategy: CloudFoundryDeploymentStrategy.BLUE_GREEN });
 
     const BaseGoals = goals("checks")
         .plan(version, autofix, new AutoCodeInspection(), new PushImpact());
@@ -78,23 +76,35 @@ export function machine(configuration: SoftwareDeliveryMachineConfiguration): So
         .plan(build)
         .after(autofix, version);
 
-    const StagingDeploymentGoals = goals("deploy-stage")
-        .plan(ArtifactGoal, StagingDeploymentGoal, StagingEndpointGoal)
+    const DeployToStagingGoals = goals("deploy")
+        .plan(cfDeployToStaging)
         .after(build);
-    const ProductionDeploymentGoals = goals("deploy-prod")
-        .plan(ArtifactGoal, ProductionDeploymentGoal, ProductionEndpointGoal);
+
+    const DeployToProductionGoals = goals("production")
+        .plan(cfDeployToProduction)
+        .after(build);
 
     sdm.addGoalContributions(goalContributors(
         onAnyPush().setGoals(BaseGoals),
-        whenPushSatisfies(IsDeploymentFrozen).setGoals(ExplainDeploymentFreezeGoal),
         whenPushSatisfies(IsMaven).setGoals(BuildGoals),
-        whenPushSatisfies(HasCloudFoundryManifest, ToDefaultBranch).setGoals(StagingDeploymentGoals),
-        whenPushSatisfies(HasCloudFoundryManifest, not(IsDeploymentFrozen), ToDefaultBranch)
-            .setGoals(ProductionDeploymentGoals),
+        whenPushSatisfies(HasCloudFoundryManifest, ToDefaultBranch).setGoals(DeployToStagingGoals),
+        whenPushSatisfies(HasCloudFoundryManifest, ToProductionBranch).setGoals(DeployToProductionGoals),
     ));
 
     sdm.addExtensionPacks(
-        SpringSupport,
+        springSupport({
+            inspectGoal: inspect,
+            autofixGoal: autofix,
+            review: {
+                cloudNative: true,
+                springStyle: true,
+            },
+            autofix: {},
+            reviewListeners: [
+                CloudNativeGitHubIssueRaisingReviewListener,
+                SpringStyleGitHubIssueRaisingReviewListener,
+            ],
+        }),
         CloudFoundrySupport,
     );
 
@@ -108,62 +118,9 @@ export function machine(configuration: SoftwareDeliveryMachineConfiguration): So
             ReplaceReadmeTitle,
             SetAtomistTeamInApplicationYml,
             TransformSeedToCustomProject,
+            AddCloudFoundryManifestTransform,
             AddFinalNameToPom,
         ],
     });
-    deployRules(sdm);
     return sdm;
-}
-
-export function deployRules(sdm: SoftwareDeliveryMachine): void {
-    const deployToStaging = {
-        deployer: new CloudFoundryBlueGreenDeployer(sdm.configuration.sdm.projectLoader),
-        targeter: () => new EnvironmentCloudFoundryTarget("staging"),
-        deployGoal: StagingDeploymentGoal,
-        endpointGoal: StagingEndpointGoal,
-        undeployGoal: ProductionUndeploymentGoal,
-
-    };
-    sdm.addGoalImplementation("Staging local deployer",
-        deployToStaging.deployGoal,
-        executeDeploy(
-            sdm.configuration.sdm.artifactStore,
-            sdm.configuration.sdm.repoRefResolver,
-            deployToStaging.endpointGoal, deployToStaging),
-        {
-            pushTest: IsMaven,
-            logInterpreter: deployToStaging.deployer.logInterpreter,
-        },
-    );
-    sdm.addGoalSideEffect(
-        deployToStaging.endpointGoal,
-        deployToStaging.deployGoal.definition.displayName,
-        AnyPush);
-
-    const deployToProduction = {
-        deployer: new CloudFoundryBlueGreenDeployer(sdm.configuration.sdm.projectLoader),
-        targeter: () => new EnvironmentCloudFoundryTarget("production"),
-        deployGoal: ProductionDeploymentGoal,
-        endpointGoal: ProductionEndpointGoal,
-        undeployGoal: ProductionUndeploymentGoal,
-    };
-    sdm.addGoalImplementation("Production CF deployer",
-        deployToProduction.deployGoal,
-        executeDeploy(
-            sdm.configuration.sdm.artifactStore,
-            sdm.configuration.sdm.repoRefResolver,
-            deployToProduction.endpointGoal, deployToProduction),
-        {
-            pushTest: IsMaven,
-            logInterpreter: deployToProduction.deployer.logInterpreter,
-        },
-    );
-    sdm.addGoalSideEffect(
-        deployToProduction.endpointGoal,
-        deployToProduction.deployGoal.definition.displayName,
-        AnyPush);
-
-    sdm.addCommand(EnableDeploy)
-        .addCommand(DisableDeploy)
-        .addCommand(DisplayDeployEnablement);
 }

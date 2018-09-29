@@ -16,16 +16,16 @@ Software Delivery Machine and how to create and develop on an SDM.
 ```
 Note: `<owner>` is your Github owner, e.g: idugalic
 
-### PCF Dev
+### CF Dev
 
- - [Download and install the CF command line client and PCF Dev (PAS 2.0.20.0)](https://docs.pivotal.io/pcf-dev/install-osx.html)
+ - [Download and install the CF command line client and CF Dev](https://github.com/cloudfoundry-incubator/cfdev)
 
-Once the installation is complete, start PCF Dev:
+Once the installation is complete, start CF Dev:
 ```
-$ cf dev start -f .ISO-FILE
+$ cf dev start
 ```
 
-After a couple of minutes you should have system running. 
+After a couple of minutes (30) you should have system running. 
 
 Login and create two spaces `cf-staging-space` , `cf-production-space` within `cfdev-org` organization:
 
@@ -35,7 +35,6 @@ $ cf create-space cf-staging-space
 $ cf create-space cf-production-space
 ```
 
-You can use the application manager by navigating to https://apps.dev.cfdev.sh/
 
 ### Install the Atomist command-line utility
 
