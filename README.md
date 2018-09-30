@@ -1,4 +1,4 @@
-# Software Delivery Machine (Cloudfoundry PCF) - by Atomist
+# Software Delivery Machine (Cloudfoundry) - by Atomist
 
 The SDM framework enables you to control your delivery process in
 code.  Think of it as an API for your software delivery.  See this
@@ -43,7 +43,7 @@ $ npm install -g @atomist/cli
 ```
 
 ### Configuration
-The following configuration should be in your `~/.atomist/client.config.json` in order to successfully connect your SDM to PCF Dev:
+The following configuration should be in your `~/.atomist/client.config.json` in order to successfully connect your SDM to CF Dev:
 ```
    "sdm": {
     "cloudfoundry": {
