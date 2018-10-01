@@ -59,7 +59,7 @@ export function machine(configuration: SoftwareDeliveryMachineConfiguration): So
         preApproval: false,
         retry: true,
     })
-       .with({ environment: "staging", strategy: CloudFoundryDeploymentStrategy.CLI });
+       .with({ environment: "staging", strategy: CloudFoundryDeploymentStrategy.API });
 
     const cfDeployToProduction = new CloudFoundryDeploy({
         uniqueName: "production-deployment",
